@@ -90,7 +90,10 @@ class CanvasEditor extends StatefulWidget {
 class _CanvasEditorState extends State<CanvasEditor> {
   double canvasWidth = 360;
   double canvasHeight = 640;
-  Color backgroundColor = Colors.white;
+  double originalWidth = 1080; // Dimensão original em alta resolução
+  double originalHeight = 1920; // Dimensão original em alta resolução
+  bool isExporting = false; // Controla se estamos no modo de exportação
+  CanvasConfig canvasConfig = CanvasElementRenderer.getPhoneConfig(); // Configuração padrão
   final GlobalKey _canvasKey = GlobalKey();
 
   List<Map<String, dynamic>> elements = [];
@@ -99,6 +102,13 @@ class _CanvasEditorState extends State<CanvasEditor> {
   final TemplateManager _templateManager = TemplateManager();
   List<Template> _templates = [];
   bool _showTemplates = false;
+  
+  // Calcula o fator de escala atual
+  double get scaleFactor => canvasConfig.scaleFactor;
+  
+  // Dimensões de exibição (reduzidas para edição)
+  double get displayWidth => canvasConfig.displaySize.width;
+  double get displayHeight => canvasConfig.displaySize.height;
 
   @override
   void initState() {
@@ -107,8 +117,10 @@ class _CanvasEditorState extends State<CanvasEditor> {
 
     const defaultJson = {
       "canvas": {
-        "width": 360,
-        "height": 640
+        "width": 1080,
+        "height": 1920,
+        "displayWidth": 180,
+        "displayHeight": 320
       },
       "elements": [
         {
@@ -271,23 +283,22 @@ class _CanvasEditorState extends State<CanvasEditor> {
       // Atualiza as dimensões do canvas
       if (parsed['canvas'] != null && parsed['canvas'] is Map) {
         final canvasConfig = parsed['canvas'] as Map;
-        final String? bgColorStr = canvasConfig['backgroundColor'] as String?;
-        
         setState(() {
-          canvasWidth = (canvasConfig['width'] as num?)?.toDouble() ?? 360;
-          canvasHeight = (canvasConfig['height'] as num?)?.toDouble() ?? 640;
+          // Dimensões originais (alta resolução)
+          originalWidth = (canvasConfig['width'] as num?)?.toDouble() ?? 1080;
+          originalHeight = (canvasConfig['height'] as num?)?.toDouble() ?? 1920;
           
-          // Define a cor de fundo se especificada
-          if (bgColorStr != null) {
-            try {
-              backgroundColor = _parseColor(bgColorStr);
-            } catch (e) {
-              // Mantém a cor padrão em caso de erro
-              backgroundColor = Colors.white;
-            }
-          } else {
-            backgroundColor = Colors.white;
-          }
+          // Dimensões de exibição (reduzidas para edição)
+          canvasWidth = (canvasConfig['displayWidth'] as num?)?.toDouble() ?? 
+                        (originalWidth / 6); // Default display scale of 1/6
+          canvasHeight = (canvasConfig['displayHeight'] as num?)?.toDouble() ?? 
+                         (originalHeight / 6); // Default display scale of 1/6
+          
+          // Atualiza a configuração
+          this.canvasConfig = CanvasConfig(
+            originalSize: Size(originalWidth, originalHeight),
+            displaySize: Size(canvasWidth, canvasHeight),
+          );
         });
       }
 
@@ -335,12 +346,22 @@ class _CanvasEditorState extends State<CanvasEditor> {
       final jsonString = _codeController.text;
       final parsed = jsonDecode(jsonString);
       
-      // Garante que o objeto canvas está presente
+      // Garante que o objeto canvas está presente com dimensions originais e de exibição
       if (parsed is Map && !parsed.containsKey('canvas')) {
         parsed['canvas'] = {
-          'width': canvasWidth,
-          'height': canvasHeight
+          'width': originalWidth,
+          'height': originalHeight,
+          'displayWidth': displayWidth,
+          'displayHeight': displayHeight
         };
+      } else if (parsed is Map && parsed.containsKey('canvas')) {
+        final canvas = parsed['canvas'] as Map;
+        if (!canvas.containsKey('displayWidth')) {
+          canvas['displayWidth'] = displayWidth;
+        }
+        if (!canvas.containsKey('displayHeight')) {
+          canvas['displayHeight'] = displayHeight;
+        }
       }
       
       final formattedJson = const JsonEncoder.withIndent('  ').convert(parsed);
@@ -355,6 +376,11 @@ class _CanvasEditorState extends State<CanvasEditor> {
 
   Future<void> _exportToPNG() async {
     try {
+      // Antes de exportar, define que estamos no modo de exportação
+      setState(() {
+        isExporting = true;
+      });
+      
       // Mostra diálogo para selecionar a qualidade
       final quality = await showDialog<double>(
         context: context,
@@ -467,7 +493,42 @@ class _CanvasEditorState extends State<CanvasEditor> {
           ),
         );
       }
+    } finally {
+      // Após exportar, voltamos ao modo de edição
+      setState(() {
+        isExporting = false;
+      });
     }
+  }
+
+  void _changeCanvasFormat(CanvasConfig newConfig) {
+    setState(() {
+      canvasConfig = newConfig;
+      originalWidth = newConfig.originalSize.width;
+      originalHeight = newConfig.originalSize.height;
+      canvasWidth = newConfig.displaySize.width;
+      canvasHeight = newConfig.displaySize.height;
+      
+      // Atualiza o JSON
+      final jsonString = _codeController.text;
+      try {
+        final parsed = jsonDecode(jsonString);
+        if (parsed is Map && parsed.containsKey('canvas')) {
+          parsed['canvas'] = {
+            'width': originalWidth,
+            'height': originalHeight,
+            'displayWidth': canvasWidth,
+            'displayHeight': canvasHeight
+          };
+          
+          final updatedJson = const JsonEncoder.withIndent('  ').convert(parsed);
+          _codeController.text = updatedJson;
+          _updateElementsFromJson(updatedJson);
+        }
+      } catch (e) {
+        // Ignora erros de parse aqui
+      }
+    });
   }
 
   @override
@@ -479,18 +540,7 @@ class _CanvasEditorState extends State<CanvasEditor> {
   Color _parseColor(String hexColor) {
     hexColor = hexColor.replaceAll('#', '');
     if (hexColor.length == 6) hexColor = 'FF$hexColor';
-    else if (hexColor.length == 3) {
-      // Converte formato simplificado #RGB para #RRGGBB
-      final r = hexColor[0];
-      final g = hexColor[1];
-      final b = hexColor[2];
-      hexColor = 'FF$r$r$g$g$b$b';
-    }
-    try {
-      return Color(int.parse('0x$hexColor'));
-    } catch (e) {
-      return Colors.white; // Cor padrão em caso de erro
-    }
+    return Color(int.parse('0x$hexColor'));
   }
 
   FontWeight _parseFontWeight(String? weight) {
@@ -650,6 +700,26 @@ class _CanvasEditorState extends State<CanvasEditor> {
       appBar: AppBar(
         title: const Text('Editor Visual com JSON'),
         actions: [
+          // Adiciona dropdown para selecionar formatos comuns de canvas
+          PopupMenuButton<CanvasConfig>(
+            tooltip: 'Formato do Canvas',
+            icon: const Icon(Icons.aspect_ratio),
+            onSelected: _changeCanvasFormat,
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: CanvasElementRenderer.getPhoneConfig(),
+                child: const Text('Celular (1080x1920)'),
+              ),
+              PopupMenuItem(
+                value: CanvasElementRenderer.getSquareConfig(),
+                child: const Text('Quadrado (1080x1080)'),
+              ),
+              PopupMenuItem(
+                value: CanvasElementRenderer.getInstagramConfig(),
+                child: const Text('Instagram (1080x1350)'),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.save),
             onPressed: _saveTemplate,
@@ -747,10 +817,10 @@ class _CanvasEditorState extends State<CanvasEditor> {
                     child: RepaintBoundary(
                       key: _canvasKey,
                       child: Container(
-                        width: canvasWidth,
-                        height: canvasHeight,
+                        width: isExporting ? originalWidth : canvasWidth,
+                        height: isExporting ? originalHeight : canvasHeight,
                         decoration: BoxDecoration(
-                          color: backgroundColor,
+                          color: Colors.white,
                           border: Border.all(color: Colors.grey.shade300),
                           boxShadow: [
                             BoxShadow(
@@ -772,9 +842,10 @@ class _CanvasEditorState extends State<CanvasEditor> {
                             return Stack(
                               children: sortedElements
                                   .map((el) => CanvasElementRenderer(
-                                        canvasSize: Size(canvasWidth, canvasHeight),
-                                        backgroundColor: backgroundColor,
-                                      ).render(el))
+                                      canvasSize: Size(originalWidth, originalHeight),
+                                      scaleFactor: scaleFactor,
+                                      isExporting: isExporting,
+                                    ).render(el))
                                   .toList(),
                             );
                           },
@@ -853,10 +924,10 @@ class _CanvasEditorState extends State<CanvasEditor> {
                     child: RepaintBoundary(
                       key: _canvasKey,
                       child: Container(
-                        width: canvasWidth,
-                        height: canvasHeight,
+                        width: isExporting ? originalWidth : canvasWidth,
+                        height: isExporting ? originalHeight : canvasHeight,
                         decoration: BoxDecoration(
-                          color: backgroundColor,
+                          color: Colors.white,
                           border: Border.all(color: Colors.grey.shade300),
                           boxShadow: [
                             BoxShadow(
@@ -878,9 +949,10 @@ class _CanvasEditorState extends State<CanvasEditor> {
                             return Stack(
                               children: sortedElements
                                   .map((el) => CanvasElementRenderer(
-                                        canvasSize: Size(canvasWidth, canvasHeight),
-                                        backgroundColor: backgroundColor,
-                                      ).render(el))
+                                      canvasSize: Size(originalWidth, originalHeight),
+                                      scaleFactor: scaleFactor,
+                                      isExporting: isExporting,
+                                    ).render(el))
                                   .toList(),
                             );
                           },

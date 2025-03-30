@@ -4,6 +4,7 @@ import 'package:video_player/video_player.dart';
 
 class VideoElementWidget extends StatefulWidget {
   final String url;
+  final Offset offset;
   final double width;
   final double height;
   final String playback; // 'loop', 'once' ou 'pause'
@@ -16,14 +17,12 @@ class VideoElementWidget extends StatefulWidget {
   final double opacity;
   final double borderRadius;
   final double? blur;
-  final bool muted;
-  final bool preserveAspectRatio;
-  final double borderWidth;
-  final Color? borderColor;
+  final bool muted; // nova propriedade para controle de áudio
 
   const VideoElementWidget({
     super.key,
     required this.url,
+    required this.offset,
     required this.width,
     required this.height,
     this.playback = 'loop', // 'loop', 'once' ou 'pause'
@@ -36,10 +35,7 @@ class VideoElementWidget extends StatefulWidget {
     this.opacity = 1.0,
     this.borderRadius = 0.0,
     this.blur,
-    this.muted = false,
-    this.preserveAspectRatio = true,
-    this.borderWidth = 0.0,
-    this.borderColor,
+    this.muted = false, // valor padrão é false (com som)
   });
 
   @override
@@ -65,7 +61,7 @@ class _VideoElementWidgetState extends State<VideoElementWidget> {
   }
 
   void _setupPlayback() {
-    switch (widget.playback.toLowerCase()) {
+    switch (widget.playback) {
       case 'pause':
         _controller.setLooping(false);
         _controller.pause();
@@ -83,7 +79,7 @@ class _VideoElementWidgetState extends State<VideoElementWidget> {
   void _onVideoUpdate() {
     if (!_controller.value.isPlaying && 
         _controller.value.position >= _controller.value.duration && 
-        widget.playback.toLowerCase() == 'once') {
+        widget.playback == 'once') {
       _controller.pause();
       _controller.seekTo(Duration.zero);
     }
@@ -112,18 +108,16 @@ class _VideoElementWidgetState extends State<VideoElementWidget> {
     final alignment = Alignment(widget.alignmentX, widget.alignmentY);
 
     Widget video = _initialized
-        ? widget.preserveAspectRatio
-            ? FittedBox(
-                fit: widget.fit,
-                alignment: alignment,
-                clipBehavior: Clip.hardEdge,
-                child: SizedBox(
-                  width: _controller.value.size.width,
-                  height: _controller.value.size.height,
-                  child: VideoPlayer(_controller),
-                ),
-              )
-            : VideoPlayer(_controller)
+        ? FittedBox(
+            fit: widget.fit,
+            alignment: alignment,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: _controller.value.size.width,
+              height: _controller.value.size.height,
+              child: VideoPlayer(_controller),
+            ),
+          )
         : const Center(child: CircularProgressIndicator());
 
     if (widget.grayscale) {
@@ -143,45 +137,25 @@ class _VideoElementWidgetState extends State<VideoElementWidget> {
       );
     }
 
-    // Aplica o deslocamento interno
-    if (widget.offsetX != 0 || widget.offsetY != 0) {
-      video = Transform.translate(
-        offset: Offset(widget.offsetX, widget.offsetY),
-        child: video,
-      );
-    }
-
-    // Aplica a borda se necessário
-    if (widget.borderWidth > 0 && widget.borderColor != null) {
-      video = Container(
-        width: widget.width,
-        height: widget.height,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(widget.borderRadius),
-          border: Border.all(
-            color: widget.borderColor!,
-            width: widget.borderWidth,
-          ),
-        ),
+    return Positioned(
+      left: widget.offset.dx,
+      top: widget.offset.dy,
+      child: Opacity(
+        opacity: widget.opacity,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(widget.borderRadius),
-          child: video,
+          child: ClipRect(
+            child: Transform.translate(
+              offset: Offset(widget.offsetX, widget.offsetY),
+              child: SizedBox(
+                width: widget.width,
+                height: widget.height,
+                child: video,
+              ),
+            ),
+          ),
         ),
-      );
-    } else {
-      video = ClipRRect(
-        borderRadius: BorderRadius.circular(widget.borderRadius),
-        child: SizedBox(
-          width: widget.width,
-          height: widget.height,
-          child: video,
-        ),
-      );
-    }
-
-    return Opacity(
-      opacity: widget.opacity,
-      child: video,
+      ),
     );
   }
 }
